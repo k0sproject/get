@@ -1,3 +1,48 @@
 #!/bin/sh
 
-echo "Hello from get script!"
+set -eou
+
+if [ ! -z "${DEBUG}" ]; then
+  set -x
+fi
+
+_auth() {
+  if [ ! -z "${K0S_GH_TOKEN}" ]; then
+    echo "Authorization: token ${K0S_GH_TOKEN}"
+  fi
+}
+
+
+_latest_version() {
+  curl -sSLf -H "$(_auth)" "https://api.github.com/repos/k0sproject/k0s/releases/latest" | grep -oE "tag_name\": *\".{1,15}\"," | sed 's/tag_name\": *\"//;s/\",//'
+}
+
+_detect_arch() {
+  case $(uname -m) in
+    amd64)  echo "amd64" ;;
+    x86_64) echo "amd64" ;;
+    aarch64) echo "arm64" ;;
+    *) _chpharos_error_echo "Unsupported processor architecture"; return 1 ;;
+  esac
+}
+
+_version() {
+  if [ ! -z "${K0S_VERSION}" ]; then
+    echo "$K0S_VERSION"
+  else
+    echo "$(_latest_version)"
+  fi
+}
+
+_download_url() {
+  local version="$(_version)"
+  local arch="$(_detect_arch)"
+
+  echo "https://github.com/k0sproject/k0s/releases/download/$version/k0s-$version-$arch"
+}
+
+
+echo "Downloading from URL: $(_download_url)"
+
+curl -sSLf -H "$(_auth)" $(_download_url) > /usr/local/bin/k0s
+chmod a+x /usr/local/bin/k0s
