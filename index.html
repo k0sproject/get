@@ -12,9 +12,8 @@ _latest_version() {
 
 _detect_arch() {
   case $(uname -m) in
-    amd64)  echo "amd64" ;;
-    x86_64) echo "amd64" ;;
-    aarch64) echo "arm64" ;;
+    amd64|x86_64) echo "amd64" ;;
+    arm64|aarch64) echo "arm64" ;;
     *) echo "Unsupported processor architecture"; return 1 ;;
   esac
 }
@@ -38,4 +37,4 @@ _download_url() {
 echo "Downloading k0s from URL: $(_download_url)"
 
 curl -sSLf $(_download_url) > /usr/local/bin/k0s
-chmod a+x /usr/local/bin/k0s
+chmod 755 /usr/local/bin/k0s
