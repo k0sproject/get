@@ -37,5 +37,7 @@ _download_url() {
 
 echo "Downloading k0s from URL: $(_download_url)"
 
-curl -sSLf $(_download_url) > /usr/bin/k0s
-chmod 755 /usr/bin/k0s
+curl -sSLf $(_download_url) > /usr/local/bin/k0s
+chmod 755 /usr/local/bin/k0s
+
+echo "k0s is now executable in /usr/local/bin"
