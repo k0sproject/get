@@ -14,6 +14,7 @@ _detect_arch() {
   case $(uname -m) in
     amd64|x86_64) echo "amd64" ;;
     arm64|aarch64) echo "arm64" ;;
+    armv7l|armv8l|arm) echo "arm" ;;
     *) echo "Unsupported processor architecture"; return 1 ;;
   esac
 }
