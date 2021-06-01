@@ -1,13 +1,170 @@
-#!/bin/sh
+#!/usr/bin/env bash
 
-set -e
+# To see the various options, see: curl https://get.k0s.sh/ | bash -s -- -h
 
-if [ ! -z "${DEBUG}" ]; then
+set -o errtrace
+set -o errexit
+
+if [ -n "${DEBUG}" ]; then
   set -x
 fi
 
+INSTALLER_VERSION="0.2.0"
+
+PREFIX="${PREFIX%/}/"
+K0S_PATH="${K0S_PATH:-/usr/local/bin/k0s}"
+K0S_USER="${K0S_USER:-k0s}"
+K0S_ROLE="${K0S_ROLE:-controller+worker}"
+
+_isys() {
+  if [[ -x /run/systemd/system ]]; then
+    echo "systemd"
+  else
+    echo "openrc"
+  fi
+}
+
+K0S_ISYS="$(_isys)"
+
+error_echo() {
+  (>&2 echo "error: $1")
+}
+
+WEB_CLIENT="$(basename "$(command -v curl || command -v wget || echo "none")" | head -1)"
+[ "${WEB_CLIENT}" = "none" ] && error_echo "curl or wget required" && exit 1
+
+_download_curl() {
+  curl -sSL -XGET "$1" \
+    -A "get-sh-installer/${INSTALLER_VERSION}"
+}
+
+_download_wget() {
+  wget "$1" \
+    -O - \
+    --quiet \
+    -U "get-sh-installer/${INSTALLER_VERSION}"
+}
+
+_download() {
+  download_"${WEB_CLIENT}" "$1"
+}
+
+_ensure_credentials() {
+  adduser --system --disabled-password --disabled-login --home /var/empty \
+          --no-create-home --quiet --force-badname --group "_${K0S_USER}"
+}
+
+_install_service() {
+  local role fn
+
+  case "${K0S_ROLE}" in
+    controller+worker)
+      role="controller"
+      extraargs="--enable-worker"
+      ;;
+    ?)
+      role="${K0S_ROLE}"
+      extraargs=""
+      ;;
+  esac
+
+  fn="$("_service_stub_filename_${K0S_ISYS}")"
+  "_service_stub_${K0S_ISYS}" "${role}" --config /etc/k0s/k0s.yaml --token-file /etc/k0s/token "${extraargs}" "${K0S_ARGS}" > "${PREFIX}${fn}"
+  chmod "$("_service_stub_chmod_${K0S_ISYS}")" "${fn}"
+}
+
+_enable_service_systemd() {
+  systemctl enable "k0s${K0S_ROLE}"
+}
+
+_enable_service_openrc() {
+  rc-update add "k0s${K0S_ROLE}" 5
+}
+
+_enable_service() {
+  "_enable_service_${K0S_ISYS}"
+}
+
+_service_stub_filename_systemd() {
+  local role="${1}"
+  echo "/etc/systemd/system/k0s${role}.service"
+}
+
+_service_stub_chmod_systemd() {
+  echo 0665
+}
+
+_service_stub_systemd() {
+  cat <<EOF
+[Unit]
+Description=k0s - Zero Friction Kubernetes
+Documentation=https://docs.k0sproject.io
+ConditionFileIsExecutable=${K0S_PATH}
+
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+StartLimitInterval=5
+StartLimitBurst=10
+ExecStart=${K0S_PATH} ${@*}
+
+RestartSec=120
+Delegate=yes
+KillMode=process
+LimitCORE=infinity
+TasksMax=infinity
+TimeoutStartSec=0
+LimitNOFILE=999999
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+_service_stub_filename_openrc() {
+  local role="${1}"
+  echo "/etc/init.d/k0s${role}"
+}
+
+_service_stub_chmod_openrc() {
+  echo 0775
+}
+
+_service_stub_openrc() {
+  local role="$1"
+  shift
+  cat <<EOF
+#!/sbin/openrc-run
+name=k0s${role}
+description="k0s - Zero Friction Kubernetes"
+supervisor=supervise-daemon
+command=${K0S_PATH}
+command_args="${@*}"
+
+supervise_daemon_args="--stdout /var/log/k0s${role}.log --stderr /var/log/k0s${role}.err"
+depend() {
+  need net
+  use dns
+  after firewall
+}
+EOF
+}
+
+_k0s() {
+  ${K0S_PATH} "${@*}"
+}
+
+_ensure_path() {
+  local path="${1}"
+  mkdir -p "${path}"
+  chmod 0770 "${path}"
+  chown "${K0S_USER}:${K0S_USER}" "${path}"
+}
+
 _latest_version() {
-  curl -sSLf "https://api.github.com/repos/k0sproject/k0s/releases/latest" | grep -oE "tag_name\": *\".{1,15}\"," | sed 's/tag_name\": *\"//;s/\",//'
+  _download "https://api.github.com/repos/k0sproject/k0s/releases/latest" | grep -oE "tag_name\": *\".{1,15}\"," | sed 's/tag_name\": *\"//;s/\",//'
 }
 
 _detect_arch() {
@@ -20,24 +177,117 @@ _detect_arch() {
 }
 
 _version() {
-  if [ ! -z "${K0S_VERSION}" ]; then
+  if [ -n "${K0S_VERSION}" ]; then
     echo "$K0S_VERSION"
   else
-    echo "$(_latest_version)"
+    _latest_version
   fi
 }
 
 _download_url() {
-  local version="$(_version)"
-  local arch="$(_detect_arch)"
+  local version arch
+  version="$(_version)"
+  arch="$(_detect_arch)"
 
   echo "https://github.com/k0sproject/k0s/releases/download/$version/k0s-$version-$arch"
 }
 
+_install_binary() {
+  local tmpfile url
+  tmpfile="$(mktemp)"
+  url="$(_download_url)"
+  echo "Downloading k0s from ${url} .."
+  _download "${url}" > "${tmpfile}" || (rm "${tmpfile}"; error_echo "download failed"; exit 1)
+  echo "Installing to ${PREFIX}${K0S_PATH} .."
+  install  -m 0755 "${tmpfile}" "${PREFIX}${K0S_PATH}"
+}
 
-echo "Downloading k0s from URL: $(_download_url)"
+_install_config() {
+  local config_path=""
+  if [ -z "$K0S_CONFIG" ]; then
+    config_path="$(mktemp)"
+    _kos default-config > "${config_path}"
+  else
+    _k0s validate --config "${K0S_CONFIG}" || (error_echo "configuration validation failed"; exit 1)
+    config_path="${K0S_CONFIG}"
+  fi
+  _ensure_path "${PREFIX}etc/k0s"
+  install -m 0660 -u "${K0S_USER}" -g "${K0S_USER}" "${config_path}" "${PREFIX}etc/k0s/k0s.yaml"
+}
 
-curl -sSLf $(_download_url) > /usr/local/bin/k0s
-chmod 755 /usr/local/bin/k0s
+_install_token() {
+  if [ -n "$K0S_TOKEN" ]; then
+    echo "${K0S_TOKEN}" > "${PREFIX}etc/k0s/token"
+  fi
+  _ensure_path "${PREFIX}etc/k0s"
+  install -m 0660 -u "${K0S_USER}" -g "${K0S_USER}" "${config_path}" "${PREFIX}etc/k0s/k0s.yaml"
+}
 
-echo "k0s is now executable in /usr/local/bin"
+_help() {
+  cat <<EOF
+usage: [-hVipugt]
+
+options:
+ -u <USER>     Set user (default: k0s) (ENV: K0S_USER)
+ -v <VERSION>  Install k0s version VERSION (default: latest) (ENV: K0S_VERSION)
+ -c <PATH>     Install a configuration from PATH (default: generate default) (ENV: K0S_CONFIG)
+ -t <TOKEN>    Cluster join token (default: none) (ENV: K0S_TOKEN)
+ -p <PATH>     Use installation prefix PATH (default: /) (ENV: PREFIX)
+ -r <ROLE>     Role of k0s instance (default: controller+worker) (ENV: K0S_ROLE)
+ -b            Install binary only
+
+ -h            Display this help
+ -V            Display installer version ${INSTALLER_VERSION}
+EOF
+}
+
+while getopts 'hVbp:v:u:c:t:r:' opt; do
+  case "$opt" in
+    v)
+      [ -z "${OPTARG}" ] && (error_echo "Missing version parameter"; exit 1)
+      K0S_VERSION="${OPTARG}"
+      ;;
+    c)
+      [ -z "${OPTARG}" ] && (error_echo "Missing config parameter"; exit 1)
+      ! [ -r "${OPTARG}" ] && (error_echo "Config file $OPTARG can't be read"; exit 1)
+      K0S_CONFIG="${OPTARG}"
+      ;;
+    r)
+      case "${OPTARG}" in
+        controller,controller+worker,worker) K0S_ROLE="${OPTARG}" ;;
+        ?) (error_echo "Invalid role parameter"; exit1) ;;
+      esac
+      ;;
+    t)
+      [ -z "${OPTARG}" ] && (error_echo "Missing token parameter"; exit 1)
+      K0S_TOKEN="${OPTARG}"
+      ;;
+    u)
+      [ -z "${OPTARG}" ] && (error_echo "Missing user parameter"; exit 1)
+      K0S_USER="${OPTARG}"
+      ;;
+    V) echo "k0s-installer ${INSTALLER_VERSION}"; exit 0 ;;
+    p)
+      [ -z "${OPTARG}" ] && (error_echo "Missing prefix parameter"; exit 1)
+      export PREFIX="${OPTARG%/}/"
+      ;;
+    b) BINARY_ONLY=true ;;
+    h) _help; exit 0 ;;
+    ?) (error_echo "invalid argument"; exit 1) ;;
+  esac
+done
+
+if ! [ "$(id -u)" = 0 ]; then
+   error_echo "must be run as root or via sudo"
+   exit 1
+fi
+
+_install_binary && echo "k0s is now executable in /usr/local/bin"
+
+[ -n "${BINARY_ONLY}" ] && exit 0
+
+_ensure_credentials && echo "Created or validated user and group $K0S_USER"
+_install_config && echo "Installed configuration to ${PREFIX}etc/k0s/k0s.yaml"
+_install_token && echo "Installed token to ${PREFIX}etc/k0s/token"
+_install_service && echo "Installed service"
+_enable_service && echo "Enabled service"
