@@ -46,39 +46,46 @@ _download_wget() {
 }
 
 _download() {
-  download_"${WEB_CLIENT}" "$1"
+  _download_"${WEB_CLIENT}" "$1"
 }
 
 _ensure_credentials() {
   adduser --system --disabled-password --disabled-login --home /var/empty \
-          --no-create-home --quiet --force-badname --group "_${K0S_USER}"
+          --no-create-home --quiet --force-badname --group "${K0S_USER}"
+}
+
+_true_role() {
+  echo "${K0S_ROLE%+*}"
 }
 
 _install_service() {
-  local role fn
+  local role fn tokenarg workerarg
 
-  case "${K0S_ROLE}" in
-    controller+worker)
-      role="controller"
-      extraargs="--enable-worker"
-      ;;
-    ?)
-      role="${K0S_ROLE}"
-      extraargs=""
-      ;;
-  esac
+  if [ -n "${K0S_TOKEN}" ]; then
+    tokenarg="--token-file=/etc/k0s/token"
+  fi
+
+  if [ "${K0S_ROLE}" = "controller+worker" ]; then
+    role="controller"
+    workerarg="--enable-worker"
+  else
+    role="${K0S_ROLE}"
+    workerarg=""
+  fi
 
   fn="$("_service_stub_filename_${K0S_ISYS}")"
-  "_service_stub_${K0S_ISYS}" "${role}" --config /etc/k0s/k0s.yaml --token-file /etc/k0s/token "${extraargs}" "${K0S_ARGS}" > "${PREFIX}${fn}"
+  "_service_stub_${K0S_ISYS}" "${role}" --config=/etc/k0s/k0s.yaml "${tokenarg}" "${workerarg}" "${K0S_ARGS}" > "${PREFIX}${fn}"
   chmod "$("_service_stub_chmod_${K0S_ISYS}")" "${fn}"
 }
 
 _enable_service_systemd() {
-  systemctl enable "k0s${K0S_ROLE}"
+  systemctl unmask "k0s$(_true_role)"
+  systemctl daemon-reload
+  systemctl enable "k0s$(_true_role)"
 }
 
 _enable_service_openrc() {
-  rc-update add "k0s${K0S_ROLE}" 5
+  rc-update add "k0s$(_true_role)" 5
 }
 
 _enable_service() {
@@ -86,12 +93,11 @@ _enable_service() {
 }
 
 _service_stub_filename_systemd() {
-  local role="${1}"
-  echo "/etc/systemd/system/k0s${role}.service"
+  echo "/etc/systemd/system/k0s$(_true_role).service"
 }
 
 _service_stub_chmod_systemd() {
-  echo 0665
+  echo 0644
 }
 
 _service_stub_systemd() {
@@ -105,9 +111,11 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
+User=${K0S_USER}
+Group=${K0S_USER}
 StartLimitInterval=5
 StartLimitBurst=10
-ExecStart=${K0S_PATH} ${@*}
+ExecStart=${K0S_PATH} $*
 
 RestartSec=120
 Delegate=yes
@@ -124,8 +132,7 @@ EOF
 }
 
 _service_stub_filename_openrc() {
-  local role="${1}"
-  echo "/etc/init.d/k0s${role}"
+  echo "/etc/init.d/k0s$(_true_role)"
 }
 
 _service_stub_chmod_openrc() {
@@ -139,6 +146,8 @@ _service_stub_openrc() {
 #!/sbin/openrc-run
 name=k0s${role}
 description="k0s - Zero Friction Kubernetes"
+setuid ${K0S_USER}
+setgid ${K0S_USER}
 supervisor=supervise-daemon
 command=${K0S_PATH}
 command_args="${@*}"
@@ -153,13 +162,14 @@ EOF
 }
 
 _k0s() {
-  ${K0S_PATH} "${@*}"
+  ${K0S_PATH} $*
 }
 
 _ensure_path() {
   local path="${1}"
+  local perm="${2}"
   mkdir -p "${path}"
-  chmod 0770 "${path}"
+  chmod "${perm}" "${path}"
   chown "${K0S_USER}:${K0S_USER}" "${path}"
 }
 
@@ -193,34 +203,45 @@ _download_url() {
 }
 
 _install_binary() {
-  local tmpfile url
+  local tmpfile
   tmpfile="$(mktemp)"
-  url="$(_download_url)"
-  echo "Downloading k0s from ${url} .."
-  _download "${url}" > "${tmpfile}" || (rm "${tmpfile}"; error_echo "download failed"; exit 1)
+
+  if [ -z "${K0S_DOWNLOAD}" ]; then
+    local url
+    url="$(_download_url)"
+    echo "Downloading k0s from ${url} .."
+    _download "${url}" > "${tmpfile}" || (rm "${tmpfile}"; error_echo "download failed"; exit 1)
+  fi
+
+  if [ "${K0S_DOWNLOAD}" = "${PREFIX}${K0S_PATH}" ]; then
+    mv "${K0S_DOWNLOAD}" "${tmpfile}"
+  else
+    tmpfile="${K0S_DOWNLOAD}"
+  fi
+
   echo "Installing to ${PREFIX}${K0S_PATH} .."
-  install  -m 0755 "${tmpfile}" "${PREFIX}${K0S_PATH}"
+  install -o root -g root -m 0755 "${tmpfile}" "${PREFIX}${K0S_PATH}"
 }
 
 _install_config() {
   local config_path=""
   if [ -z "$K0S_CONFIG" ]; then
     config_path="$(mktemp)"
-    _kos default-config > "${config_path}"
+    _k0s default-config > "${config_path}"
   else
     _k0s validate --config "${K0S_CONFIG}" || (error_echo "configuration validation failed"; exit 1)
     config_path="${K0S_CONFIG}"
   fi
-  _ensure_path "${PREFIX}etc/k0s"
-  install -m 0660 -u "${K0S_USER}" -g "${K0S_USER}" "${config_path}" "${PREFIX}etc/k0s/k0s.yaml"
+  _ensure_path "${PREFIX}etc/k0s" "0770"
+  install -m 0660 -o "${K0S_USER}" -g "${K0S_USER}" "${config_path}" "${PREFIX}etc/k0s/k0s.yaml"
 }
 
 _install_token() {
   if [ -n "$K0S_TOKEN" ]; then
     echo "${K0S_TOKEN}" > "${PREFIX}etc/k0s/token"
   fi
-  _ensure_path "${PREFIX}etc/k0s"
-  install -m 0660 -u "${K0S_USER}" -g "${K0S_USER}" "${config_path}" "${PREFIX}etc/k0s/k0s.yaml"
+  _ensure_path "${PREFIX}etc/k0s" "0770"
+  install -m 0660 -o "${K0S_USER}" -g "${K0S_USER}" "${config_path}" "${PREFIX}etc/k0s/k0s.yaml"
 }
 
 _help() {
@@ -237,6 +258,7 @@ options:
  -t <TOKEN>    Cluster join token (default: none) (ENV: K0S_TOKEN)
  -p <PATH>     Use installation prefix PATH (default: /) (ENV: PREFIX)
  -r <ROLE>     Role of k0s instance (default: controller+worker) (ENV: K0S_ROLE)
+ -k <PATH>     Path to an already downloaded binary (ENV: K0S_DOWNLOAD)
  -b            Install binary only
 
  -h            Display this help
@@ -244,7 +266,7 @@ options:
 EOF
 }
 
-while getopts 'hVbp:v:u:c:t:r:' opt; do
+while getopts 'hVbp:v:u:c:t:r:k:' opt; do
   case "$opt" in
     v)
       [ -z "${OPTARG}" ] && (error_echo "Missing version parameter"; exit 1)
@@ -274,6 +296,10 @@ while getopts 'hVbp:v:u:c:t:r:' opt; do
       [ -z "${OPTARG}" ] && (error_echo "Missing prefix parameter"; exit 1)
       export PREFIX="${OPTARG%/}/"
       ;;
+    k)
+      [ -z "${OPTARG}" ] && (error_echo "Missing k0s path parameter"; exit 1)
+      export K0S_DOWNLOAD="${OPTARG}"
+      ;;
     b) BINARY_ONLY=true ;;
     h) _help; exit 0 ;;
     ?) (error_echo "invalid argument"; exit 1) ;;
@@ -291,6 +317,7 @@ _install_binary && echo "k0s is now executable in /usr/local/bin"
 
 _ensure_credentials && echo "Created or validated user and group $K0S_USER"
 _install_config && echo "Installed configuration to ${PREFIX}etc/k0s/k0s.yaml"
-_install_token && echo "Installed token to ${PREFIX}etc/k0s/token"
+_ensure_path "${PREFIX}var/lib/k0s" "0755" && echo "Created or validated data dir ${PREFIX}var/lib/k0s"
+[ -n "${K0S_TOKEN}" ] && _install_token && echo "Installed token to ${PREFIX}etc/k0s/token"
 _install_service && echo "Installed service"
 _enable_service && echo "Enabled service"
