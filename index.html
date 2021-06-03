@@ -30,8 +30,10 @@ error_echo() {
   (>&2 echo "error: $1")
 }
 
-WEB_CLIENT="$(basename "$(command -v curl || command -v wget || echo "none")" | head -1)"
-[ "${WEB_CLIENT}" = "none" ] && error_echo "curl or wget required" && exit 1
+if [ -z "${WEB_CLIENT}" ]; then
+  WEB_CLIENT="$(basename "$(command -v curl || command -v wget || echo "none")" | head -1)"
+  [ "${WEB_CLIENT}" = "none" ] && error_echo "curl or wget required" && exit 1
+fi
 
 _download_curl() {
   curl -sSL -XGET "$1" \
@@ -246,7 +248,7 @@ _install_token() {
 
 _help() {
   cat <<EOF
-usage: [-hVipugt]
+usage: [-hVipugtb]
 
 example:
  $ curl https://get.k0s.sh/ | bash -s -- -r worker -t abcd123==
@@ -259,7 +261,7 @@ options:
  -p <PATH>     Use installation prefix PATH (default: /) (ENV: PREFIX)
  -r <ROLE>     Role of k0s instance (default: controller+worker) (ENV: K0S_ROLE)
  -k <PATH>     Path to an already downloaded binary (ENV: K0S_DOWNLOAD)
- -b            Install binary only
+ -b            No service, install binary only (ENV: BINARY_ONLY)
 
  -h            Display this help
  -V            Display installer version ${INSTALLER_VERSION}
@@ -315,7 +317,8 @@ _install_binary && echo "k0s is now executable in /usr/local/bin"
 
 [ -n "${BINARY_ONLY}" ] && exit 0
 
-_ensure_credentials && echo "Created or validated user and group $K0S_USER"
+[ "${K0S_USER}" = "root" ] || (_ensure_credentials && echo "Created or validated user and group $K0S_USER")
+
 _install_config && echo "Installed configuration to ${PREFIX}etc/k0s/k0s.yaml"
 _ensure_path "${PREFIX}var/lib/k0s" "0755" && echo "Created or validated data dir ${PREFIX}var/lib/k0s"
 [ -n "${K0S_TOKEN}" ] && _install_token && echo "Installed token to ${PREFIX}etc/k0s/token"
