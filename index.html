@@ -308,19 +308,21 @@ while getopts 'hVbp:v:u:c:t:r:k:' opt; do
   esac
 done
 
+(uname -a | grep -q Linux) || (error_echo "only supported on linux for now"; exit 1)
+
 if ! [ "$(id -u)" = 0 ]; then
    error_echo "must be run as root or via sudo"
    exit 1
 fi
 
-_install_binary && echo "k0s is now executable in /usr/local/bin"
+(_install_binary && echo "k0s is now executable in /usr/local/bin") || (error_echo "k0s binary installation failed"; exit 1)
 
 [ -n "${BINARY_ONLY}" ] && exit 0
 
-[ "${K0S_USER}" = "root" ] || (_ensure_credentials && echo "Created or validated user and group $K0S_USER")
+[ "${K0S_USER}" = "root" ] || ((_ensure_credentials && echo "Created or validated user and group $K0S_USER") || (error_echo "credentials creation failed"; exit 1)
 
-_install_config && echo "Installed configuration to ${PREFIX}etc/k0s/k0s.yaml"
-_ensure_path "${PREFIX}var/lib/k0s" "0755" && echo "Created or validated data dir ${PREFIX}var/lib/k0s"
-[ -n "${K0S_TOKEN}" ] && _install_token && echo "Installed token to ${PREFIX}etc/k0s/token"
-_install_service && echo "Installed service"
-_enable_service && echo "Enabled service"
+(_install_config && echo "Installed configuration to ${PREFIX}etc/k0s/k0s.yaml") || (error_echo "configuration installation failed"; exit 1)
+(_ensure_path "${PREFIX}var/lib/k0s" "0755" && echo "Created or validated data dir ${PREFIX}var/lib/k0s") || (error_echo "data dir creation failed"; exit 1)
+[ -n "${K0S_TOKEN}" ] && ((_install_token && echo "Installed token to ${PREFIX}etc/k0s/token") || error_echo "token file creation failed"; exit 1)
+(_install_service && echo "Installed service") || (error_echo "service installation failed"; exit 1)
+(_enable_service && echo "Enabled service") || (error_echo "enabling service failed"; exit 1)
