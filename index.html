@@ -1,0 +1,502 @@
+#!/usr/bin/env bash
+
+# To see the various options, see: curl https://get.k0s.sh/ | bash -s -- -h
+
+set -o errtrace
+set -o errexit
+
+if [ -n "${DEBUG}" ]; then
+  set -x
+fi
+
+INSTALLER_VERSION="0.2.0"
+
+_help() {
+  cat <<EOF
+usage: $0 [OPTIONS] [K0S EXTRA ARGS]
+
+example:
+ $ curl https://get.k0s.sh/ | bash -s -- -r worker -t abcd123==
+
+options:
+ -u <USER>    --user=<USER>		Set user (default: k0s) (ENV: K0S_USER)
+ -V <VERSION> --k0s-version=<VERSION>	Install k0s version VERSION (default: latest) (ENV: K0S_VERSION)
+ -c <PATH>    --config=<PATH>		Install a configuration from PATH (default: generate default) (ENV: K0S_CONFIG)
+ -t <TOKEN>   --token=<TOKEN>		Cluster join token (default: none) (ENV: K0S_TOKEN)
+ -p <PATH>    --prefix=<PATH>		Use installation prefix PATH (default: /) (ENV: PREFIX)
+ -r <ROLE>    --role=<ROLE>		Role of k0s instance (default: controller+worker) (ENV: K0S_ROLE)
+ -k <PATH>    --k0s-binary=<PATH>	Path to an pre-downloaded binary (ENV: K0S_BINARY)
+ -b           --no-service		Skip service installation, only install the binary (ENV: BINARY_ONLY)
+
+ -h           --help			Display this help
+ -v           --version			Display installer version ${INSTALLER_VERSION}
+EOF
+}
+
+die() { echo "error: $*" >&2; exit 2; }  # complain to STDERR and exit with error
+
+_detect_isys_systemd() {
+  stat /run/systemd/system > /dev/null 2>&1
+}
+
+_detect_isys_upstart() {
+  stat /sbin/upstart-udev-bridge > /dev/null 2>&1 || \
+    ( stat /sbin/initctl > /dev/null 2>&1 && \
+      /sbin/initctl --version 2> /dev/null | grep -q "\(upstart" )
+}
+
+_detect_isys_openrc() {
+  command -v openrc-init > /dev/null 2>&1 || \
+    ( stat /etc/inittab > /dev/null 2>&1 && (grep ::sysinit: /etc/inittab | grep -q openrc) )
+}
+
+_detect_isys_sysv() {
+  command -v service 2>&1 && stat /etc/init.d > /dev/null 2>&1
+}
+
+_detect_init_system() {
+  _detect_isys_systemd && echo "systemd" && return 0
+  _detect_isys_upstart && echo "upstart" && return 0
+  _detect_isys_openrc  && echo "openrc"  && return 0
+  _detect_isys_sysv    && echo "sysv"
+}
+
+_detect_web_client_curl() {
+  command -v curl > /dev/null 2>&1
+}
+
+_detect_web_client_wget() {
+  command -v wget > /dev/null 2>&1
+}
+
+_detect_web_client() {
+  _detect_web_client_curl && echo "curl" && return 0
+  _detect_web_client_wget && echo "wget"
+}
+
+_download_curl() {
+  curl -sSL -XGET "$1" \
+    -A "get-k0s-sh-installer/${INSTALLER_VERSION}"
+}
+
+_download_wget() {
+  wget "$1" \
+    -O - \
+    --quiet \
+    -U "get-k0s-sh-installer/${INSTALLER_VERSION}"
+}
+
+_download() {
+  _download_"${WEB_CLIENT}" "$1"
+}
+
+_ensure_credentials() {
+  adduser --system --disabled-password --disabled-login --home /var/empty \
+          --no-create-home --quiet --force-badname --group "${K0S_USER}"
+}
+
+_install_service() {
+  local role fn tokenarg workerarg
+  case "${K0S_ISYS}" in
+    systemd|openrc) ;;
+    *) (_error_echo "unknown or unsupported init system: ${K0S_ISYS}"; exit 1) ;;
+  esac
+
+  if [ -n "${K0S_TOKEN}" ]; then
+    tokenarg="--token-file=/etc/k0s/token"
+  fi
+
+  if [ "${K0S_ROLE}" = "controller+worker" ]; then
+    workerarg="--enable-worker"
+  else
+    workerarg=""
+  fi
+
+  fn="$("_service_stub_filename_${K0S_ISYS}")"
+  "_service_stub_${K0S_ISYS}" --config=/etc/k0s/k0s.yaml "${tokenarg}" "${workerarg}" ${K0S_ARGS} > "${PREFIX}${fn}"
+  chmod "$("_service_stub_chmod_${K0S_ISYS}")" "${fn}"
+}
+
+_enable_service_systemd() {
+  systemctl unmask "${K0S_SERVICE}"
+  systemctl daemon-reload
+  systemctl enable "${K0S_SERVICE}"
+}
+
+_enable_service_openrc() {
+  rc-update add "${K0S_SERVICE}" 5
+}
+
+_enable_service() {
+  "_enable_service_${K0S_ISYS}"
+}
+
+_service_stub_filename_systemd() {
+  echo "/etc/systemd/system/${K0S_SERVICE}.service"
+}
+
+_service_stub_chmod_systemd() {
+  echo 0644
+}
+
+_service_stub_systemd() {
+  cat <<EOF
+[Unit]
+Description=k0s - Zero Friction Kubernetes
+Documentation=https://docs.k0sproject.io
+ConditionFileIsExecutable=${K0S_PATH}
+
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=${K0S_USER}
+Group=${K0S_USER}
+StartLimitInterval=5
+StartLimitBurst=10
+ExecStart=${K0S_PATH} ${K0S_TRUE_ROLE} $*
+
+RestartSec=120
+Delegate=yes
+KillMode=process
+LimitCORE=infinity
+TasksMax=infinity
+TimeoutStartSec=0
+LimitNOFILE=999999
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+_service_stub_filename_openrc() {
+  echo "/etc/init.d/${K0S_SERVICE}"
+}
+
+_service_stub_chmod_openrc() {
+  echo 0775
+}
+
+_service_stub_openrc() {
+  cat <<EOF
+#!/sbin/openrc-run
+name=${K0S_SERVICE}
+description="k0s - Zero Friction Kubernetes"
+setuid ${K0S_USER}
+setgid ${K0S_USER}
+supervisor=supervise-daemon
+command=${K0S_PATH}
+command_args="${K0S_TRUE_ROLE} ${@*}"
+
+supervise_daemon_args="--stdout /var/log/${K0S_SERVICE}.log --stderr /var/log/${K0S_SERVICE}.err"
+depend() {
+  need net
+  use dns
+  after firewall
+}
+EOF
+}
+
+# Adapted from https://github.com/kardianos/service/blob/master/service_sysv_linux.go
+_service_stub_sysv() {
+  cat <<EOF
+#!/bin/sh
+# For RedHat and cousins:
+# chkconfig: - 99 01
+# description: k0s - Zero Friction Kubernetes
+# processname: ${K0S_PATH}
+### BEGIN INIT INFO
+# Provides:          {{.Path}}
+# Required-Start: $local_fs $network $time
+# Required-Stop: $local_fs $network
+# Default-Start:     3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: ${K0S_SERVICE}
+# Description:       k0s - Zero Friction Kubernetes
+### END INIT INFO
+cmd="${K0S_PATH} ${K0S_TRUE_ROLE} ${@*}"
+name=${K0S_SERVICE}
+pid_file="/var/run/$name.pid"
+stdout_log="/var/log/$name.log"
+stderr_log="/var/log/$name.err"
+[ -e /etc/sysconfig/$name ] && . /etc/sysconfig/$name
+get_pid() {
+    cat "$pid_file"
+}
+is_running() {
+    [ -f "$pid_file" ] && ps $(get_pid) > /dev/null 2>&1
+}
+case "$1" in
+    start)
+        if is_running; then
+            echo "Already started"
+        else
+            echo "Starting $name"
+            $cmd >> "$stdout_log" 2>> "$stderr_log" &
+            echo $! > "$pid_file"
+            if ! is_running; then
+                echo "Unable to start, see $stdout_log and $stderr_log"
+                exit 1
+            fi
+        fi
+    ;;
+    stop)
+        if is_running; then
+            echo -n "Stopping $name.."
+            kill $(get_pid)
+            for i in $(seq 1 10)
+            do
+                if ! is_running; then
+                    break
+                fi
+                echo -n "."
+                sleep 1
+            done
+            echo
+            if is_running; then
+                echo "Not stopped; may still be shutting down or shutdown may have failed"
+                exit 1
+            else
+                echo "Stopped"
+                if [ -f "$pid_file" ]; then
+                    rm "$pid_file"
+                fi
+            fi
+        else
+            echo "Not running"
+        fi
+    ;;
+    restart)
+        $0 stop
+        if is_running; then
+            echo "Unable to stop, will not attempt to start"
+            exit 1
+        fi
+        $0 start
+    ;;
+    status)
+        if is_running; then
+            echo "Running"
+        else
+            echo "Stopped"
+            exit 1
+        fi
+    ;;
+    *)
+    echo "Usage: $0 {start|stop|restart|status}"
+    exit 1
+    ;;
+esac
+exit 0
+EOF
+}
+
+_k0s() {
+  ${K0S_PATH} $*
+}
+
+_ensure_path() {
+  local path="${1}"
+  local perm="${2}"
+  mkdir -p "${path}"
+  chmod "${perm}" "${path}"
+  chown "${K0S_USER}:${K0S_USER}" "${path}"
+}
+
+_latest_version() {
+  _download "https://api.github.com/repos/k0sproject/k0s/releases/latest" | grep -oE "tag_name\": *\".{1,15}\"," | sed 's/tag_name\": *\"//;s/\",//'
+}
+
+_detect_arch() {
+  case $(uname -m) in
+    amd64|x86_64) echo "amd64" ;;
+    arm64|aarch64) echo "arm64" ;;
+    armv7l|armv8l|arm) echo "arm" ;;
+  esac
+}
+
+_k0s_version() {
+  if [ -n "${K0S_VERSION}" ]; then
+    echo "$K0S_VERSION"
+  else
+    _latest_version || die "failed to resolve latest k0s version"
+  fi
+}
+
+_k0s_download_url() {
+  local version arch
+  version="$(_k0s_version)"
+  arch="$(_detect_arch)"
+  [ -z "${arch}" ] && die "unsupported processor architecture"
+
+  echo "https://github.com/k0sproject/k0s/releases/download/$version/k0s-$version-$arch"
+}
+
+_install_binary() {
+  local tmpfile
+  tmpfile="$(mktemp)"
+  trap '{ rm -f -- "$tmpfile"; }' EXIT
+
+  if [ -z "${K0S_BINARY}" ]; then
+    local url
+    url="$(_k0s_download_url)"
+    echo "Downloading k0s from ${url} to ${tmpfile}"
+    if command -v pv > /dev/null 2&>1; then
+      _download "${url}" | pv > "${tmpfile}" || die "download failed"
+    else
+      _download "${url}" > "${tmpfile}" || die "download failed"
+    fi
+  fi
+
+  if [ "${K0S_BINARY}" = "${PREFIX}${K0S_PATH}" ]; then
+    # hack, since K0S_BINARY points to the target, move it to tmp to be moved back..
+    mv "${K0S_BINARY}" "${tmpfile}"
+  else
+    tmpfile="${K0S_BINARY}"
+  fi
+
+  echo "Installing to ${K0S_PATH} .."
+  install -o root -g root -m 0755 "${tmpfile}" "${K0S_PATH}"
+}
+
+_install_config() {
+  local config_path=""
+  if [ -z "$K0S_CONFIG" ]; then
+    config_path="$(mktemp)"
+    _k0s default-config > "${config_path}"
+  else
+    _k0s validate --config "${K0S_CONFIG}" || die "configuration validation failed"
+    config_path="${K0S_CONFIG}"
+  fi
+  _ensure_path "${PREFIX}etc/k0s" "0770"
+  install -m 0660 -o "${K0S_USER}" -g "${K0S_USER}" "${config_path}" "${PREFIX}etc/k0s/k0s.yaml"
+}
+
+_install_token() {
+  if [ -n "$K0S_TOKEN" ]; then
+    echo "${K0S_TOKEN}" > "${PREFIX}etc/k0s/token"
+  fi
+  _ensure_path "${PREFIX}etc/k0s" "0770"
+  install -m 0660 -o "${K0S_USER}" -g "${K0S_USER}" "${config_path}" "${PREFIX}etc/k0s/k0s.yaml"
+}
+
+
+_configure() {
+  if [ "${K0S_USER}" != "root" ]; then
+    _ensure_credentials || die "credentials creation failed"
+    echo "Created or validated user and group $K0S_USER"
+  fi
+
+  _install_config || die "configuration installation failed"
+  echo "Installed configuration to ${PREFIX}etc/k0s/k0s.yaml"
+
+  _ensure_path "${PREFIX}var/lib/k0s" "0755" || die "data dir creation failed"
+  echo "Created or validated data dir ${PREFIX}var/lib/k0s"
+
+  if [ -n "${K0S_TOKEN}" ]; then
+    _install_token || die "token file creation failed"
+    echo "Installed token to ${PREFIX}etc/k0s/token"
+  fi
+
+  _install_service || die "service installation failed"
+  echo "Installed ${K0S_SERVICE} service"
+
+  _enable_service || die "enabling service failed"
+  echo "Enabled ${K0S_SERVICE} service"
+}
+
+# // adapted from https://stackoverflow.com/a/28466267/681520
+needs_arg() { if [ -z "$OPTARG" ]; then die "missing argument for --$OPT option"; fi; }
+
+while getopts 'hvVbp:v:u:c:t:r:k:-:' OPT; do
+  # support long options: https://stackoverflow.com/a/28466267/519360
+  if [ "$OPT" = "-" ]; then   # long option: reformulate OPT and OPTARG
+    OPT="${OPTARG%%=*}"       # extract long option name
+    OPTARG="${OPTARG#$OPT}"   # extract long option argument (may be empty)
+    OPTARG="${OPTARG#=}"      # if long option argument, remove assigning `=`
+  fi
+  case "$OPT" in
+    V | k0s-version)
+      needs_arg
+      K0S_VERSION="${OPTARG}"
+      ;;
+    c | config)
+      needs_arg
+      [ -r "${OPTARG}" ] || die "config file $OPTARG can't be read"
+      K0S_CONFIG="${OPTARG}"
+      ;;
+    r | role)
+      needs_arg
+      case "${OPTARG}" in
+        controller,controller+worker,worker)
+          K0S_ROLE="${OPTARG}"
+          ;;
+        ?) die "invalid role ${OPTARG} (must be controller, worker or controller+worker)" ;;
+      esac
+      ;;
+    t | token)
+      needs_arg
+      K0S_TOKEN="${OPTARG}"
+      ;;
+    u | user)
+      needs_arg
+      K0S_USER="${OPTARG}"
+      ;;
+    v | version)
+      echo "k0s-installer ${INSTALLER_VERSION}"
+      exit 0
+      ;;
+    p | prefix)
+      needs_arg
+      PREFIX="${OPTARG}"
+      ;;
+    k | k0s-binary)
+      needs_arg
+      K0S_BINARY="${OPTARG}"
+      ;;
+    b | no-service)
+      BINARY_ONLY="true"
+      ;;
+    h | help)
+      _help
+      exit 0
+      ;;
+    ??* ) die "illegal option --$OPT" ;;  # bad long option
+    ? ) exit 2 ;;  # bad short option (error reported via getopts)
+  esac
+done
+shift $((OPTIND-1)) # remove parsed options and args from $@ list
+K0S_ARGS="$*"
+
+if [ -z "${BINARY_ONLY}" ]; then
+  uname -a | grep -q Linux || die "service installation only supported on linux, use --no-service to install binary only"
+  if [ -z "${K0S_ISYS}" ]; then
+    K0S_ISYS="$(_detect_init_system)"
+    [ -n "${K0S_ISYS}" ] || die "failed to detect a supported init system (systemd, upstart, openrc, sysv), use --no-service to install binary only"
+  fi
+fi
+
+if [ -z "${WEB_CLIENT}" ] && [ -z "${K0S_BINARY}" ]; then
+  WEB_CLIENT="$(_detect_web_client)"
+  [ -z "${WEB_CLIENT}" ] && die "curl or wget required or path to pre-downloaded binary must be set via --k0s-binary"
+fi
+
+[ "$(id -u)" = 0 ] || die "must be run as root or via sudo"
+
+PREFIX="${PREFIX%/}/"
+K0S_PATH="${K0S_PATH:-/usr/local/bin/k0s}"
+
+K0S_USER="${K0S_USER:-k0s}"
+K0S_ROLE="${K0S_ROLE:-controller+worker}"
+K0S_TRUE_ROLE="${K0S_ROLE%+*}"
+K0S_SERVICE="k0s${K0S_TRUE_ROLE}"
+
+_install_binary || die "k0s binary installation failed"
+echo "k0s is now executable in ${K0S_PATH}"
+
+[ -n "${BINARY_ONLY}" ] && exit 0
+
+_configure || die "k0s service configuration failed"
+echo "k0s service installation succeeded"
+
