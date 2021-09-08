@@ -2,13 +2,11 @@
 
 set -e
 
+K0S_VERSION=${K0S_VERSION:-"v1.22.1+k0s.0"}
+
 if [ ! -z "${DEBUG}" ]; then
   set -x
 fi
-
-_latest_version() {
-  curl -sSLf "https://api.github.com/repos/k0sproject/k0s/releases/latest" | grep -oE "tag_name\": *\".{1,15}\"," | sed 's/tag_name\": *\"//;s/\",//'
-}
 
 _detect_arch() {
   case $(uname -m) in
@@ -19,19 +17,10 @@ _detect_arch() {
   esac
 }
 
-_version() {
-  if [ ! -z "${K0S_VERSION}" ]; then
-    echo "$K0S_VERSION"
-  else
-    echo "$(_latest_version)"
-  fi
-}
-
 _download_url() {
-  local version="$(_version)"
   local arch="$(_detect_arch)"
 
-  echo "https://github.com/k0sproject/k0s/releases/download/$version/k0s-$version-$arch"
+  echo "https://github.com/k0sproject/k0s/releases/download/$K0S_VERSION/k0s-$K0S_VERSION-$arch"
 }
 
 
