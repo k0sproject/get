@@ -2,7 +2,17 @@
 
 set -e
 
-K0S_VERSION=${K0S_VERSION:-"v1.23.3+k0s.0"}
+_k0s_latest() {
+  curl -sSLf -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/k0sproject/k0s/releases \
+    | grep '"tag_name":' \
+    | cut -d"\"" -f4 \
+    | grep "+k0s" \
+    | grep -v -- - \
+    | sort -r -t "." -k1,4n \
+    | head -1
+}
+
+K0S_VERSION=${K0S_VERSION:-"$(_k0s_latest)"}
 
 if [ ! -z "${DEBUG}" ]; then
   set -x
@@ -23,6 +33,10 @@ _download_url() {
   echo "https://github.com/k0sproject/k0s/releases/download/$K0S_VERSION/k0s-$K0S_VERSION-$arch"
 }
 
+if [[ ! ${K0S_VERSION} =~ ^v[0-9]+\.[0-9]+\.[0-9]+\+k0s\.[0-9]+$ ]]; then
+  echo "Invalid K0S_VERSION or auto-discovery failed: '${K0s_VERSION}'" >&2
+  exit 1
+fi
 
 echo "Downloading k0s from URL: $(_download_url)"
 
