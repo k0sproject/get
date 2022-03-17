@@ -2,7 +2,13 @@
 
 set -e
 
-K0S_VERSION=${K0S_VERSION:-"v1.23.3+k0s.0"}
+_k0s_latest() {
+  curl -sSLf "https://docs.k0sproject.io/stable.txt"
+}
+
+if [ "${K0S_VERSION}" = "" ]; then
+  K0S_VERSION=$(_k0s_latest)
+fi
 
 if [ ! -z "${DEBUG}" ]; then
   set -x
@@ -22,7 +28,6 @@ _download_url() {
 
   echo "https://github.com/k0sproject/k0s/releases/download/$K0S_VERSION/k0s-$K0S_VERSION-$arch"
 }
-
 
 echo "Downloading k0s from URL: $(_download_url)"
 
