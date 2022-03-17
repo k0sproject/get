@@ -6,7 +6,9 @@ _k0s_latest() {
   curl -sSLf "https://docs.k0sproject.io/stable.txt"
 }
 
-K0S_VERSION=${K0S_VERSION:-"$(_k0s_latest)"}
+if [ "${K0S_VERSION}" = "" ]; then
+  K0S_VERSION=$(_k0s_latest)
+fi
 
 if [ ! -z "${DEBUG}" ]; then
   set -x
