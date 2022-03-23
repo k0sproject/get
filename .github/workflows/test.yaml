@@ -1,0 +1,76 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+    branches:
+    - main
+
+jobs:
+  installation_success:
+    name: Installation success
+    runs-on: ubuntu-latest
+    outputs:
+      needsCheckout: ${{ steps.get.outputs.needsCheckout }}
+      method: ${{ steps.get.outputs.method }}
+    steps:
+    - name: Determine how to access get.k0s.sh
+      id: get
+      run: |
+        if [ "$GITHUB_REPOSITORY" = k0sproject/get ] && [ "$GITHUB_EVENT_NAME" = push] && [ "$GITHUB_REF" = refs/heads/main ]; then
+          needsCheckout=false
+          method="curl --proto '=https' --tlsv1.2 -sSf https://get.k0s.sh"
+        else
+          needsCheckout=true
+          method="cat index.html"
+        fi
+        echo ::set-output name=needsCheckout::"$needsCheckout"
+        echo ::set-output name=method::"$method"
+
+    - name: Checkout
+      uses: actions/checkout@v3
+      if: ${{ steps.get.outputs.needsCheckout == 'true' }}
+
+    - name: Test installation success on ubuntu-latest
+      id: test
+      env:
+        GET_K0S_SH: ${{ steps.get.outputs.method }}
+      run: |
+        $GET_K0S_SH | sudo sh
+
+        [ -x /usr/local/bin/k0s ] || {
+            echo k0s not executable 1>&2
+            exit 1
+        }
+
+        /usr/local/bin/k0s version || {
+            echo failed to execute k0s 1>&2
+            exit 1
+        }
+
+  installation_failure:
+    name: Installation failure
+    needs: installation_success
+    strategy:
+      matrix:
+        runner: [macos-latest, windows-latest]
+        include:
+        - runner: macos-latest
+          sudo: sudo
+    defaults:
+      run:
+        shell: sh
+    runs-on: ${{ matrix.runner }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+      if: ${{ needs.installation_success.outputs.needsCheckout == 'true' }}
+
+    - name: Test installation failure on ${{ matrix.runner }}
+      env:
+        GET_K0S_SH: ${{ needs.installation_success.outputs.method }}
+      run: |
+        if $GET_K0S_SH | ${{ matrix.sudo }} sh; then
+            echo "get.k0s.sh doesn't fail fail when it should" 1>&2
+            exit 1
+        fi
