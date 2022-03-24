@@ -17,7 +17,7 @@ jobs:
     - name: Determine how to access get.k0s.sh
       id: get
       run: |
-        if [ "$GITHUB_REPOSITORY" = k0sproject/get ] && [ "$GITHUB_EVENT_NAME" = push] && [ "$GITHUB_REF" = refs/heads/main ]; then
+        if [ "$GITHUB_REPOSITORY" = k0sproject/get ] && [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF" = refs/heads/main ]; then
           needsCheckout=false
           method="curl --proto '=https' --tlsv1.2 -sSf https://get.k0s.sh"
         else
