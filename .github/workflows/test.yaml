@@ -1,10 +1,6 @@
 name: Test
 
-on:
-  push:
-  pull_request:
-    branches:
-    - main
+on: [ pull_request ]
 
 jobs:
   installation_success:
@@ -36,15 +32,45 @@ jobs:
       env:
         GET_K0S_SH: ${{ steps.get.outputs.method }}
       run: |
-        $GET_K0S_SH | sudo sh
+        echo "- Run install"
+        $GET_K0S_SH | sudo sh || {
+          echo k0s binary install failed 1>&2
+          exit 1
+        }
 
+        echo "- Assert k0s is executable in /usr/local/bin"
         [ -x /usr/local/bin/k0s ] || {
             echo k0s not executable 1>&2
             exit 1
         }
 
+        echo "- Assert remove-k0s.sh is executable in /usr/local/bin"
+        [ -x /usr/local/bin/remove-k0s.sh ] || {
+            echo remove-k0s.sh not executable 1>&2
+            exit 1
+        }
+
+        echo "- Assert k0s version runs"
         /usr/local/bin/k0s version || {
             echo failed to execute k0s 1>&2
+            exit 1
+        }
+       
+        echo "- Assert remove-k0s.sh runs"
+        sudo /usr/local/bin/remove-k0s.sh || {
+            echo failed to run remove-k0s.sh 1>&2
+            exit 1
+        }
+
+        echo "- Assert k0s was removed from /usr/local/bin"
+        [ ! -x /usr/local/bin/k0s ] || {
+            echo k0s still exists after remove 1>&2
+            exit 1
+        }
+        
+        echo "- Assert remove-k0s.sh was removed from /usr/local/bin"
+        [ ! -x /usr/local/bin/remove-k0s.sh ] || {
+            echo remove-k0s.sh still exists after remove 1>&2
             exit 1
         }
 
