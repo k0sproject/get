@@ -34,6 +34,42 @@ _download_url() {
   echo "https://github.com/k0sproject/k0s/releases/download/$K0S_VERSION/$k0sBinary-$K0S_VERSION-$k0sArch"
 }
 
+_create_uninstaller() {
+  k0spath="$1"
+  scriptpath="$2"
+  shasum="$(shasum -a 256 "$k0spath" | cut -d' ' -f1)"
+  cat > "$scriptpath" <<EOF
+#!/bin/sh
+
+set -e
+
+if [ -n "\${DEBUG}" ]; then
+  set -x
+fi
+
+if [ ! -f "$k0spath" ]; then
+  echo "k0s binary not found at $k0spath" 1>&2
+  exit 1
+fi
+
+"$k0spath" status >/dev/null 2>&1 && {
+  echo "k0s is running, please stop it before uninstalling" 1>&2
+  exit 1
+}
+
+expected="$shasum"
+actual="\$(shasum -a 256 "$k0spath" | cut -d' ' -f1)"
+
+if [ "\$expected" != "\$actual" ]; then
+  echo "binary at $k0spath has an unexpected checksum - not removing" 1>&2
+  exit 1
+fi
+
+rm -f "$k0spath" "$scriptpath"
+EOF
+  chmod 755 -- "$scriptpath"
+}
+
 main() {
   if [ -z "${K0S_VERSION}" ]; then
     K0S_VERSION=$(_k0s_latest)
@@ -51,7 +87,10 @@ main() {
   curl -sSLf "$k0sDownloadUrl" >"$k0sInstallPath/$k0sBinary"
   chmod 755 -- "$k0sInstallPath/$k0sBinary"
 
+  _create_uninstaller "$k0sInstallPath/$k0sBinary" "$k0sInstallPath/remove-$k0sBinary.sh"
+
   echo "k0s is now executable in $k0sInstallPath"
+  echo "- to remove k0s, run $k0sInstallPath/remove-$k0sBinary.sh"
 }
 
 main
