@@ -6,8 +6,19 @@ if [ -n "${DEBUG}" ]; then
   set -x
 fi
 
+_fetch() {
+  if command -v curl >/dev/null 2>&1; then
+    curl -sSLf "$@"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q -O - "$@"
+  else
+    echo "Error: neither curl nor wget is available" >&2
+    exit 1
+  fi
+}
+
 _k0s_latest() {
-  curl -sSLf "https://docs.k0sproject.io/stable.txt"
+  _fetch "https://docs.k0sproject.io/stable.txt"
 }
 
 _detect_binary() {
@@ -48,7 +59,7 @@ main() {
 
   echo "Downloading k0s from URL: $k0sDownloadUrl"
 
-  curl -sSLf "$k0sDownloadUrl" >"$k0sInstallPath/$k0sBinary"
+  _fetch "$k0sDownloadUrl" >"$k0sInstallPath/$k0sBinary"
   chmod 755 -- "$k0sInstallPath/$k0sBinary"
 
   echo "k0s is now executable in $k0sInstallPath"
