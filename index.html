@@ -42,15 +42,15 @@ _detect_arch() {
 }
 
 _download_url() {
-  echo "https://github.com/k0sproject/k0s/releases/download/$K0S_VERSION/$k0sBinary-$K0S_VERSION-$k0sArch"
+  echo "https://github.com/k0sproject/k0s/releases/download/$K0S_VERSION/$k0sBinary-$K0S_VERSION-$K0S_ARCH"
 }
 
 main() {
   : "${K0S_VERSION:=$(_k0s_latest)}"
   : "${K0S_INSTALL_PATH:=/usr/local/bin}"
+  : "${K0S_ARCH:=$(_detect_arch)}"
 
   k0sBinary="$(_detect_binary)"
-  k0sArch="$(_detect_arch)"
   k0sDownloadUrl="$(_download_url)"
 
   mkdir -p -- "$K0S_INSTALL_PATH"
