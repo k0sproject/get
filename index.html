@@ -1,4 +1,5 @@
 #!/bin/sh
+# vim:set filetype=sh:
 
 set -e
 
@@ -42,27 +43,25 @@ _detect_arch() {
 }
 
 _download_url() {
-  echo "https://github.com/k0sproject/k0s/releases/download/$K0S_VERSION/$k0sBinary-$K0S_VERSION-$k0sArch"
+  echo "https://github.com/k0sproject/k0s/releases/download/$K0S_VERSION/$k0sBinary-$K0S_VERSION-$K0S_ARCH"
 }
 
 main() {
-  if [ -z "${K0S_VERSION}" ]; then
-    K0S_VERSION=$(_k0s_latest)
-  fi
+  : "${K0S_VERSION:=$(_k0s_latest)}"
+  : "${K0S_INSTALL_PATH:=/usr/local/bin}"
+  : "${K0S_ARCH:=$(_detect_arch)}"
 
-  k0sInstallPath=/usr/local/bin
   k0sBinary="$(_detect_binary)"
-  k0sArch="$(_detect_arch)"
   k0sDownloadUrl="$(_download_url)"
 
-  mkdir -p -- "$k0sInstallPath"
+  mkdir -p -- "$K0S_INSTALL_PATH"
 
   echo "Downloading k0s from URL: $k0sDownloadUrl"
 
-  _fetch "$k0sDownloadUrl" >"$k0sInstallPath/$k0sBinary"
-  chmod 755 -- "$k0sInstallPath/$k0sBinary"
+  _fetch "$k0sDownloadUrl" >"$K0S_INSTALL_PATH/$k0sBinary"
+  chmod 755 -- "$K0S_INSTALL_PATH/$k0sBinary"
 
-  echo "k0s is now executable in $k0sInstallPath"
+  echo "k0s is now executable in $K0S_INSTALL_PATH"
   echo "You can use it to complete the installation of k0s on this node, "
   echo "see https://docs.k0sproject.io/stable/install/ for more information."
 }
