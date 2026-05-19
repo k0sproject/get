@@ -85,3 +85,9 @@ teardown() {
   [[ "$output" == *"Unsupported"* ]]
 }
 
+@test "fails on unsupported architecture" {
+  MOCK_MACHINE="riscv64" run "${BATS_TEST_DIRNAME}/../index.html"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Unsupported"* ]]
+}
+
