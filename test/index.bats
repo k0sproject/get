@@ -45,3 +45,43 @@ teardown() {
   [ -f "$INSTALL_DIR/k0s" ]
 }
 
+@test "uses amd64 in download URL for x86_64" {
+  run "${BATS_TEST_DIRNAME}/../index.html"
+  [[ "$output" == *"-amd64"* ]]
+}
+
+@test "uses arm64 in download URL for aarch64" {
+  MOCK_MACHINE="aarch64" run "${BATS_TEST_DIRNAME}/../index.html"
+  [[ "$output" == *"-arm64"* ]]
+}
+
+@test "uses arm in download URL for armv7l" {
+  MOCK_MACHINE="armv7l" run "${BATS_TEST_DIRNAME}/../index.html"
+  [[ "$output" == *"-arm"* ]]
+  [[ "$output" != *"-arm64"* ]]
+}
+
+@test "K0S_ARCH overrides architecture detection" {
+  K0S_ARCH="arm64" run "${BATS_TEST_DIRNAME}/../index.html"
+  [[ "$output" == *"-arm64"* ]]
+}
+
+@test "K0S_VERSION is reflected in download URL" {
+  K0S_VERSION="v1.99.0" run "${BATS_TEST_DIRNAME}/../index.html"
+  [[ "$output" == *"v1.99.0"* ]]
+}
+
+@test "K0S_INSTALL_PATH overrides install location" {
+  local custom_dir="$INSTALL_DIR/custom"
+  K0S_INSTALL_PATH="$custom_dir" run "${BATS_TEST_DIRNAME}/../index.html"
+  [ "$status" -eq 0 ]
+  [ -f "$custom_dir/k0s" ]
+  [[ "$output" == *"$custom_dir"* ]]
+}
+
+@test "fails on unsupported operating system" {
+  MOCK_OS="Darwin" run "${BATS_TEST_DIRNAME}/../index.html"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Unsupported"* ]]
+}
+
