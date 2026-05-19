@@ -91,3 +91,23 @@ teardown() {
   [[ "$output" == *"Unsupported"* ]]
 }
 
+@test "fails when download fails" {
+  MOCK_CURL_EXITCODE=1 run "${BATS_TEST_DIRNAME}/../index.html"
+  [ "$status" -eq 1 ]
+}
+
+@test "falls back to wget when curl is unavailable" {
+  rm -f "$MOCK_DIR/curl"
+  mock_stdin wget <<-EOF
+	printf "binary-content"
+	EOF
+  run "${BATS_TEST_DIRNAME}/../index.html"
+  [ "$status" -eq 0 ]
+}
+
+@test "fails when neither curl nor wget are available" {
+  rm -f "$MOCK_DIR/curl"
+  run "${BATS_TEST_DIRNAME}/../index.html"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"neither curl nor wget"* ]]
+}
