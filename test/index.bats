@@ -91,6 +91,12 @@ teardown() {
   [[ "$output" == *"Unsupported"* ]]
 }
 
+@test "fetches latest version when K0S_VERSION is unset" {
+  MOCK_CURL_OUTPUT="v1.42.0" K0S_VERSION="" run "${BATS_TEST_DIRNAME}/../index.html"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"v1.42.0"* ]]
+}
+
 @test "fails when download fails" {
   MOCK_CURL_EXITCODE=1 run "${BATS_TEST_DIRNAME}/../index.html"
   [ "$status" -eq 1 ]
@@ -103,6 +109,15 @@ teardown() {
 	EOF
   run "${BATS_TEST_DIRNAME}/../index.html"
   [ "$status" -eq 0 ]
+}
+
+@test "propagates wget failure" {
+  rm -f "$MOCK_DIR/curl"
+  mock_stdin wget <<-EOF
+	exit 1
+	EOF
+  run "${BATS_TEST_DIRNAME}/../index.html"
+  [ "$status" -eq 1 ]
 }
 
 @test "fails when neither curl nor wget are available" {
