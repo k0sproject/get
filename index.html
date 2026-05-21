@@ -4,66 +4,66 @@
 set -e
 
 if [ -n "${DEBUG}" ]; then
-  set -x
+	set -x
 fi
 
 _fetch() {
-  if command -v curl >/dev/null 2>&1; then
-    curl -sSLf "$@"
-  elif command -v wget >/dev/null 2>&1; then
-    wget -q -O - "$@"
-  else
-    echo "Error: neither curl nor wget is available" >&2
-    exit 1
-  fi
+	if command -v curl >/dev/null 2>&1; then
+		curl -sSLf "$@"
+	elif command -v wget >/dev/null 2>&1; then
+		wget -q -O - "$@"
+	else
+		echo "Error: neither curl nor wget is available" >&2
+		exit 1
+	fi
 }
 
 _k0s_latest() {
-  _fetch "https://docs.k0sproject.io/stable.txt"
+	_fetch "https://docs.k0sproject.io/stable.txt"
 }
 
 _detect_binary() {
-  os="$(uname)"
-  case "$os" in
-    Linux) echo "k0s" ;;
-    *) echo "Unsupported operating system: $os" 1>&2; return 1 ;;
-  esac
-  unset os
+	os="$(uname)"
+	case "$os" in
+		Linux) echo "k0s" ;;
+		*) echo "Unsupported operating system: $os" 1>&2; return 1 ;;
+	esac
+	unset os
 }
 
 _detect_arch() {
-  arch="$(uname -m)"
-  case "$arch" in
-    amd64|x86_64) echo "amd64" ;;
-    arm64|aarch64) echo "arm64" ;;
-    armv7l|armv8l|arm) echo "arm" ;;
-    *) echo "Unsupported processor architecture: $arch" 1>&2; return 1 ;;
-  esac
-  unset arch
+	arch="$(uname -m)"
+	case "$arch" in
+		amd64|x86_64) echo "amd64" ;;
+		arm64|aarch64) echo "arm64" ;;
+		armv7l|armv8l|arm) echo "arm" ;;
+		*) echo "Unsupported processor architecture: $arch" 1>&2; return 1 ;;
+	esac
+	unset arch
 }
 
 _download_url() {
-  echo "https://github.com/k0sproject/k0s/releases/download/$K0S_VERSION/$k0sBinary-$K0S_VERSION-$K0S_ARCH"
+	echo "https://github.com/k0sproject/k0s/releases/download/$K0S_VERSION/$k0sBinary-$K0S_VERSION-$K0S_ARCH"
 }
 
 main() {
-  : "${K0S_VERSION:=$(_k0s_latest)}"
-  : "${K0S_INSTALL_PATH:=/usr/local/bin}"
-  [ -n "${K0S_ARCH:-}" ] || K0S_ARCH=$(_detect_arch)
+	: "${K0S_VERSION:=$(_k0s_latest)}"
+	: "${K0S_INSTALL_PATH:=/usr/local/bin}"
+	[ -n "${K0S_ARCH:-}" ] || K0S_ARCH=$(_detect_arch)
 
-  k0sBinary=$(_detect_binary)
-  k0sDownloadUrl="$(_download_url)"
+	k0sBinary=$(_detect_binary)
+	k0sDownloadUrl="$(_download_url)"
 
-  mkdir -p -- "$K0S_INSTALL_PATH"
+	mkdir -p -- "$K0S_INSTALL_PATH"
 
-  echo "Downloading k0s from URL: $k0sDownloadUrl"
+	echo "Downloading k0s from URL: $k0sDownloadUrl"
 
-  _fetch "$k0sDownloadUrl" >"$K0S_INSTALL_PATH/$k0sBinary"
-  chmod 755 -- "$K0S_INSTALL_PATH/$k0sBinary"
+	_fetch "$k0sDownloadUrl" >"$K0S_INSTALL_PATH/$k0sBinary"
+	chmod 755 -- "$K0S_INSTALL_PATH/$k0sBinary"
 
-  echo "k0s is now executable in $K0S_INSTALL_PATH"
-  echo "You can use it to complete the installation of k0s on this node, "
-  echo "see https://docs.k0sproject.io/stable/install/ for more information."
+	echo "k0s is now executable in $K0S_INSTALL_PATH"
+	echo "You can use it to complete the installation of k0s on this node, "
+	echo "see https://docs.k0sproject.io/stable/install/ for more information."
 }
 
 main
