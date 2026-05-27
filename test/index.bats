@@ -29,8 +29,9 @@ setup() {
 	exit 0
 	EOF
 
-	# Restrict PATH to mocks + /bin so tests are isolated from the real curl/wget/uname
+	# Restrict PATH to mocks + /bin so tests are isolated from the real uname/chmod
 	export PATH="$MOCK_DIR:/bin"
+	export CURL="$MOCK_DIR/curl"
 	export K0S_VERSION="v1.30.0"
 	export K0S_INSTALL_PATH="$INSTALL_DIR"
 }
@@ -103,26 +104,23 @@ teardown() {
 }
 
 @test "falls back to wget when curl is unavailable" {
-	rm -f "$MOCK_DIR/curl"
 	mock_stdin wget <<-EOF
 	printf "binary-content"
 	EOF
-	run "${BATS_TEST_DIRNAME}/../index.html"
+	CURL=no WGET="$MOCK_DIR/wget" run "${BATS_TEST_DIRNAME}/../index.html"
 	[ "$status" -eq 0 ]
 }
 
 @test "propagates wget failure" {
-	rm -f "$MOCK_DIR/curl"
 	mock_stdin wget <<-EOF
 	exit 1
 	EOF
-	run "${BATS_TEST_DIRNAME}/../index.html"
+	CURL=no WGET="$MOCK_DIR/wget" run "${BATS_TEST_DIRNAME}/../index.html"
 	[ "$status" -eq 1 ]
 }
 
 @test "fails when neither curl nor wget are available" {
-	rm -f "$MOCK_DIR/curl"
-	run "${BATS_TEST_DIRNAME}/../index.html"
+	CURL=no WGET=no run "${BATS_TEST_DIRNAME}/../index.html"
 	[ "$status" -eq 1 ]
 	[[ "$output" == *"neither curl nor wget"* ]]
 }

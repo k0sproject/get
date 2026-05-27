@@ -8,10 +8,10 @@ if [ -n "${DEBUG}" ]; then
 fi
 
 _fetch() {
-	if command -v curl >/dev/null 2>&1; then
-		curl -sSLf "$@"
-	elif command -v wget >/dev/null 2>&1; then
-		wget -q -O - "$@"
+	if [ "$CURL" != "no" ] && command -v "$CURL" >/dev/null 2>&1; then
+		"$CURL" -sSLf "$@"
+	elif [ "$WGET" != "no" ] && command -v "$WGET" >/dev/null 2>&1; then
+		"$WGET" -q -O - "$@"
 	else
 		echo "Error: neither curl nor wget is available" >&2
 		exit 1
@@ -47,6 +47,8 @@ _download_url() {
 }
 
 main() {
+	: "${CURL:=curl}"
+	: "${WGET:=wget}"
 	: "${K0S_VERSION:=$(_k0s_latest)}"
 	: "${K0S_INSTALL_PATH:=/usr/local/bin}"
 	[ -n "${K0S_ARCH:-}" ] || K0S_ARCH=$(_detect_arch)
